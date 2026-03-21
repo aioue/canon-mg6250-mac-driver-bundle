@@ -1,0 +1,12 @@
+# Deploy / experiment debris (never commit)
+canon_tmp/
+extracted_files/
+printer_driver_work/
+scanner_extraction_work/
+
+# macOS
+.DS_Store
+
+# Editor / local
+*.swp
+*~

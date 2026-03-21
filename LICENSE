@@ -1,0 +1,35 @@
+MIT License
+
+Copyright (c) 2026 the contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+**Scope:** This MIT license applies only to **original materials in this repository**
+(shell scripts and Markdown in `scanner-driver/`, `printer-driver/`, and the
+repository root) written by the contributors. It does **not** apply to Canon’s
+**third-party disk images** or their contents:
+
+- **Printer driver:** `printer-driver/mcpd-mac-mg6200-16_20_0_0-ea21_3.dmg` (or successor filenames)
+- **Scanner driver:** `scanner-driver/misd-mac-ijscanner1-4_0_0-ea19_2.dmg` (or successor filenames)
+
+Those files are **Canon Inc. software**; they are **not authored by this
+project’s contributors**. Use them only under **Canon’s license and terms** (see
+[`CANON_DMG_NOTICE.md`](./CANON_DMG_NOTICE.md)).
