@@ -79,6 +79,39 @@ Dry-run extract only (no copy to `/Library`): `DRY_RUN=1 ./deploy_printer_canon_
 | [`deploy_printer_driver.sh`](printer-driver/deploy_printer_driver.sh) | Legacy: filters (+ optional scanner from printer folder); often insufficient alone on modern macOS |
 | [`restore_canon_mg6250_test_airprint.sh`](printer-driver/restore_canon_mg6250_test_airprint.sh) | Restore `.ppd.bak` for a patched test queue |
 
+## Grayscale and black-and-white printing
+
+By default the Canon PPD prints in **colour** (`*DefaultColorModel: RGB16`, `*DefaultCNIJGrayScale: 0`). With grayscale **off**, "black" text is reproduced as **composite colour** - a mix of cyan/magenta/yellow dye inks plus black - which looks muddy and wastes colour ink. `install_canon_mg6250_bonjour_network.sh` therefore sets grayscale **on** as the queue default so everyday documents use the **pigment black (PGBK)** cartridge only.
+
+Grayscale on this PPD needs **all three** of these options set together:
+
+```bash
+sudo lpadmin -p Canon-MG6250-Bonjour-Network \
+  -o CNIJGrayScale=1 -o CNIJGrayScaleCheckBox=1 -o CNIJRGB2GrayConvert=1
+```
+
+`CNIJRGB2GrayConvert=1` is the one that's easy to miss - without it the filter still processes colour raster data and the printer pulls colour inks even though grayscale "looks" enabled.
+
+**Duplex forces colour ink (important):** auto-duplex on the MG6250 switches to the **fast-drying dye inks** (composite black = C+M+Y) instead of pigment black, because PGBK pigment can't dry quickly enough to flip the sheet. The result is a yellow/grey tint on B&W text. **Do not** bake auto-duplex into the queue default if you want pure black. For true-black double-sided output, use **manual duplex**: Print dialog -> **Paper Handling** -> **Pages to Print: Odd Only**, flip the stack, then print **Even Only** (each pass is single-sided, so PGBK is used both times).
+
+**Printing a colour job occasionally** (overrides the grayscale default for one job):
+
+```bash
+lp -d Canon-MG6250-Bonjour-Network \
+  -o CNIJGrayScale=0 -o CNIJRGB2GrayConvert=0 /path/to/photo.pdf
+```
+
+Or untick **Grayscale Printing** under **Color Options** in the macOS Print dialog.
+
+## Addendum: implementation notes
+
+- Canon PPD grayscale requires ALL THREE options: `CNIJGrayScale=1`, `CNIJGrayScaleCheckBox=1`, AND `CNIJRGB2GrayConvert=1` - the last is critical but easily missed
+- macOS print job presets (`~/Library/Preferences/com.apple.print.custompresets*.plist`) are unreliable - CUPS queue defaults via `lpadmin -o` are authoritative
+- Canon's PDE (Print Dialog Extension) does not reliably respond to quality-related queue defaults - avoid baking quality settings into deploy scripts
+- `install_canon_mg6250_bonjour_network.sh` is the primary deployment entry point for the printer
+- Scripts need `sudo` - use `osascript ... with administrator privileges` for GUI sudo in non-interactive shells (e.g. Cursor agent)
+- Driver tree and PPD persist across queue removal - no need to redeploy `/Library/Printers/Canon/BJPrinter` if already present
+
 ## Caveats
 
 - Classic **PPD-based** drivers may be deprecated in a future CUPS; **driverless IPP** is Apple’s long-term direction.

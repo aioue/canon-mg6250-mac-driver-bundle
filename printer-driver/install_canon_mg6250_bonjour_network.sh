@@ -51,6 +51,23 @@ sudo cupsctl --debug-logging
 ./add_canon_mg6250_official_queue.sh "$IPP_URI" "$QUEUE_ID" "$QUEUE_DISPLAY"
 
 echo ""
+echo "Setting queue defaults: grayscale only (black PGBK cartridge)."
+# NOTE: Do NOT enable auto-duplex as a default. On the MG6250, duplex forces the
+# fast-drying DYE inks (composite black = C+M+Y) instead of pigment black (PGBK),
+# which reintroduces the yellow/grey tint on B&W text. Keep duplex a per-job choice.
+sudo lpadmin -p "$QUEUE_ID" \
+  -o CNIJGrayScale=1 -o CNIJGrayScaleCheckBox=1 -o CNIJRGB2GrayConvert=1
+
+echo "Patching macOS print dialog 'last used' settings (overrides queue defaults)..."
+PRINTER_PLIST="$HOME/Library/Preferences/com.apple.print.custompresets.forprinter.${QUEUE_ID}.plist"
+PB=/usr/libexec/PlistBuddy
+for key in CNIJGrayScale CNIJGrayScaleCheckBox CNIJRGB2GrayConvert; do
+  "$PB" -c "Delete :\"com.apple.print.v2.lastUsedSettingsPref\":${key}" "$PRINTER_PLIST" 2>/dev/null || true
+  "$PB" -c "Add :\"com.apple.print.v2.lastUsedSettingsPref\":${key} string 1" "$PRINTER_PLIST" 2>/dev/null || true
+done
+killall cfprefsd 2>/dev/null || true
+
+echo ""
 echo "=== Queue status ==="
 lpstat -p "$QUEUE_ID" 2>&1 || true
 lpstat -v "$QUEUE_ID" 2>&1 || true
