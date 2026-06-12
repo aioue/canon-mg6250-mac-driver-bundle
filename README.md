@@ -60,6 +60,18 @@ lp -d Canon-MG6250-Bonjour-Network /path/to/file.pdf
 
 **Queue name vs display name:** CUPS queue IDs cannot contain spaces or parentheses. The script creates queue **`Canon-MG6250-Bonjour-Network`** and sets the friendly title **`Canon-MG6250 (Bonjour Network)`** via `lpadmin -D`.
 
+**After install — rename and tidy queues:** macOS often adds extra printers alongside the Bonjour queue (e.g. an AirPrint **Study** entry, or a **USB** queue if the cable is plugged in). Those use colour defaults and are easy to pick by mistake in Preview. After install, rename the Bonjour queue so it stands out in the picker, and remove or ignore the others:
+
+```bash
+# Friendly name shown in the Print dialog (queue ID unchanged)
+sudo lpadmin -p Canon-MG6250-Bonjour-Network -D 'Canon-MG6250 (Black Only)'
+
+# Optional: remove a duplicate macOS-added queue (safe — does not uninstall the Canon driver)
+sudo lpadmin -x Canon_MG6250
+```
+
+Use **System Settings → Printers** or `lpstat -p` to see queue IDs. Only the Bonjour queue with the Canon PPD has grayscale-on defaults; keep that one as your everyday printer.
+
 **Manual workflow** (custom URI or queue name):
 
 ```bash
