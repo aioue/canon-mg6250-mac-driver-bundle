@@ -1,62 +1,166 @@
 #!/bin/bash
 # ==============================================================================
 # Script: deploy_canon_scanner.sh
-# Description: Extracts and deploys the legacy Canon MG6200 series scanner driver.
-# Usage: ./deploy_canon_scanner.sh
+# Description: Extracts and deploys the legacy Canon MG6200 series scanner driver
+#              (ICA module + BJNP plugin + legacy network registration helper).
+# Usage: ./deploy_canon_scanner.sh [--network]
 #        Place 'misd-mac-ijscanner1-4_0_0-ea19_2.dmg' in the same directory.
 #        Requires sudo privileges.
-# Tested: macOS Tahoe 26.3 (Apple Silicon)
-# Note: Will work until Rosetta 2 translation layer is no longer shipped with OSX.
-# Note: This is an unsupported "side-load" of 64-bit binaries.
+#        --network: after the driver install, start CIJScannerRegister and
+#        install a per-user LaunchAgent so network (BJNP) scanning works
+#        after reboot. Optional — omit for USB-only use.
+# Tested: macOS Tahoe 26.x (Apple Silicon)
+# Note: Will work until Rosetta 2 translation layer is no longer shipped with macOS.
+# Note: This is an unsupported "side-load" of x86_64 Canon binaries (Rosetta).
 # ==============================================================================
 
+set -euo pipefail
+
+NETWORK=0
+if [[ "${1:-}" == "--network" ]]; then
+  NETWORK=1
+elif [[ $# -gt 0 ]]; then
+  echo "Error: unknown argument '$1' (usage: $0 [--network])" >&2
+  exit 1
+fi
+
 DMG="misd-mac-ijscanner1-4_0_0-ea19_2.dmg"
-PKG="canonijscanner1.pkg"
 WORKDIR="$(pwd)/scanner_extraction_work"
 DEST_ICA="/Library/Image Capture/Devices"
+DEST_REGISTER="/Library/Image Capture/Support/LegacyDeviceDiscoveryHelpers"
 DEST_PLUG="/Library/Printers/Canon/IJScanner/Plugins"
 
-if [ ! -f "$DMG" ]; then
-    echo "Error: $DMG not found in current directory."
-    exit 1
+if [[ ! -f "$DMG" ]]; then
+  echo "Error: $DMG not found in current directory." >&2
+  exit 1
 fi
 
 echo "--- Mounting DMG ---"
-VOLUME=$(hdiutil attach -nobrowse "$DMG" | grep /Volumes | awk '{print $3}')
+PLIST_OUT=$(mktemp)
+hdiutil attach -plist -nobrowse "$DMG" >"$PLIST_OUT"
+VOLUME=""
+for i in $(seq 0 20); do
+  mp=$(plutil -extract "system-entities.${i}.mount-point" raw "$PLIST_OUT" 2>/dev/null) || true
+  [[ -n "$mp" && -d "$mp" ]] || continue
+  VOLUME="$mp"
+  break
+done
+rm -f "$PLIST_OUT"
+if [[ -z "$VOLUME" ]]; then
+  echo "Error: could not determine DMG mount point." >&2
+  exit 1
+fi
 
-echo "--- Extracting Payload ---"
-mkdir -p "$WORKDIR"
-# Expanding nested package structure
-pkgutil --expand "$VOLUME/$PKG" "$WORKDIR/extracted"
+OUTER_PKG=$(find "$VOLUME" -maxdepth 1 -name '*.pkg' ! -name '.*' 2>/dev/null | head -1)
+if [[ -z "$OUTER_PKG" ]]; then
+  echo "Error: no .pkg at root of DMG volume." >&2
+  hdiutil detach "$VOLUME" 2>/dev/null || true
+  exit 1
+fi
 
-echo "--- Deploying Files ---"
-# Create directories (Idempotent)
-sudo mkdir -p "$DEST_ICA" "$DEST_PLUG"
+echo "--- Expanding packages (outer: $(basename "$OUTER_PKG")) ---"
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR/outer" "$WORKDIR/payload"
+pkgutil --expand "$OUTER_PKG" "$WORKDIR/outer"
 
-# Move Scanner Application
-sudo cp -R "$WORKDIR/extracted/Library/Image Capture/Devices/Canon IJScanner1.app" "$DEST_ICA/"
+INNER_PKG_DIR=$(find "$WORKDIR/outer" -name '*.pkg' -type d 2>/dev/null | head -1)
+if [[ -z "$INNER_PKG_DIR" || ! -f "$INNER_PKG_DIR/Payload" ]]; then
+  echo "Error: inner package Payload not found after expand." >&2
+  hdiutil detach "$VOLUME" 2>/dev/null || true
+  exit 1
+fi
 
-# Move Plugins
-sudo cp -R "$WORKDIR/extracted/Library/Printers/Canon/IJScanner/Plugins/"*.plugin "$DEST_PLUG/"
+echo "--- Extracting cpio Payload ---"
+( cd "$WORKDIR/payload" && gzip -dc "$INNER_PKG_DIR/Payload" | cpio -idm )
 
-echo "--- Applying Permissions and Signatures ---"
-# Remove Quarantine and re-sign for Apple Silicon execution
+SRC_APP="$WORKDIR/payload/Library/Image Capture/Devices/Canon IJScanner1.app"
+SRC_REGISTER="$WORKDIR/payload/Library/Image Capture/Support/LegacyDeviceDiscoveryHelpers/CIJScannerRegister.app"
+SRC_PLUG_DIR="$WORKDIR/payload/Library/Printers/Canon/IJScanner/Plugins"
+
+if [[ ! -d "$SRC_APP" ]]; then
+  echo "Error: missing $SRC_APP in payload." >&2
+  hdiutil detach "$VOLUME" 2>/dev/null || true
+  exit 1
+fi
+
+echo "--- Deploying files ---"
+sudo mkdir -p "$DEST_ICA" "$DEST_REGISTER" "$DEST_PLUG"
+
+sudo cp -R "$SRC_APP" "$DEST_ICA/"
+if [[ -d "$SRC_REGISTER" ]]; then
+  sudo cp -R "$SRC_REGISTER" "$DEST_REGISTER/"
+fi
+if [[ -d "$SRC_PLUG_DIR" ]]; then
+  sudo cp -R "$SRC_PLUG_DIR/"*.plugin "$DEST_PLUG/"
+fi
+
+echo "--- Applying permissions and ad-hoc signatures ---"
 sudo xattr -cr "$DEST_ICA/Canon IJScanner1.app"
 sudo codesign --force --deep --sign - "$DEST_ICA/Canon IJScanner1.app"
 
+if [[ -d "$DEST_REGISTER/CIJScannerRegister.app" ]]; then
+  sudo xattr -cr "$DEST_REGISTER/CIJScannerRegister.app"
+  sudo codesign --force --deep --sign - "$DEST_REGISTER/CIJScannerRegister.app"
+fi
+
 for f in "$DEST_PLUG"/*.plugin; do
-    sudo xattr -cr "$f"
-    sudo codesign --force --deep --sign - "$f"
+  [[ -e "$f" ]] || continue
+  sudo xattr -cr "$f"
+  sudo codesign --force --deep --sign - "$f"
 done
 
-echo "--- Cleanup and Discovery ---"
-# Detach DMG
+echo "--- Cleanup and discovery reload ---"
 hdiutil detach "$VOLUME"
-# Force reload of ICA services
-sudo killall ImageCaptureServices
+sudo killall ImageCaptureServices 2>/dev/null || true
 
-echo "--- Deployment Complete ---"
-echo "1. IMPORTANT: Unplug your USB scanner, wait 5 seconds, and replug it."
-echo "2. Launch 'Image Capture' to test."
-echo "3. To debug, run this command in a terminal while opening Image Capture:"
-echo "log stream --predicate 'subsystem == \"com.apple.ImageCaptureCore\"'"
+if [[ "$NETWORK" -eq 1 ]]; then
+  echo "--- Network scanning setup (--network) ---"
+  # CIJScannerRegister publishes the registered ICA device entry that network
+  # scans must be driven through (the Bonjour entry fails -9933). Without the
+  # agent it only starts when something else launches it, and a reboot leaves
+  # network scanning broken.
+  AGENT_DIR="$HOME/Library/LaunchAgents"
+  AGENT_PLIST="$AGENT_DIR/jp.co.canon.CIJScannerRegister.plist"
+  mkdir -p "$AGENT_DIR"
+  cat > "$AGENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>jp.co.canon.CIJScannerRegister</string>
+  <key>ProgramArguments</key><array>
+    <string>$DEST_REGISTER/CIJScannerRegister.app/Contents/MacOS/CIJScannerRegister</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+PLIST
+  launchctl bootout gui/"$(id -u)/jp.co.canon.CIJScannerRegister" 2>/dev/null || true
+  launchctl bootstrap gui/"$(id -u)" "$AGENT_PLIST"
+  # Headless scan script next to the verify script for terminal use.
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$SCRIPT_DIR/scan_network_test.swift" ]]; then
+    sudo mkdir -p /usr/local/bin
+    sudo install -m 755 "$SCRIPT_DIR/scan_network_test.swift" /usr/local/bin/canon-scan-test.swift
+  fi
+fi
+
+echo "--- Deployment complete ---"
+echo ""
+echo "Canon ICA module name is 'Canon IJScanner1.app' (the '1' is Canon's product name, not a duplicate install)."
+echo ""
+echo "Network scanning (Wi-Fi/Ethernet):"
+echo "  1. Run: ./verify_network_scan.sh"
+echo "  2. GUI note: the 'Shared' (Bonjour) entry fails -9933 on this printer —"
+echo "     headless scanning via the registered entry is the proven path."
+echo "  3. For headless scanning, deploy with --network and run:"
+echo "     swift /usr/local/bin/canon-scan-test.swift"
+echo "     (requires Image Capture GUI closed; scans the registered ICA entry)"
+echo ""
+echo "USB scanning:"
+echo "  1. Plug in USB, wait a few seconds."
+echo "  2. Open Image Capture → device under 'Devices'."
+echo ""
+echo "If a network scan fails with -9933 ('cannot communicate'): quit Image"
+echo "Capture (the Canon module services one client), and scan the registered"
+echo "ICA entry — see README 'Network scanning' for the working procedure."
+echo ""
+echo "Debug: /usr/bin/log stream --predicate 'process == \"Canon IJScanner1\" OR process == \"Image Capture\"'"
