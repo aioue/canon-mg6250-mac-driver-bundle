@@ -2,15 +2,14 @@
 # ==============================================================================
 # Script: deploy_canon_scanner.sh
 # Description: Extracts and deploys the legacy Canon MG6200 series scanner driver
-#              (ICA module + BJNP plugin + legacy network registration helper).
-# Usage: ./deploy_canon_scanner.sh [--headless-scan]
+#              (ICA module + BJNP plugin + legacy registration helper) for USB
+#              scanning.
+# Usage: ./deploy_canon_scanner.sh
 #        Place 'misd-mac-ijscanner1-4_0_0-ea19_2.dmg' in the same directory.
 #        Requires sudo privileges.
-#        --headless-scan: after the driver install, install the headless scan
-#        script and a per-user LaunchAgent that runs CIJScannerRegister at
-#        login. The agent publishes the registered ICA device entry that
-#        scripted scans must be driven through; without it the entry is
-#        missing after a reboot. Optional — omit for USB-only use.
+#        USB scanning only. Network (BJNP) scanning does not work on this
+#        printer/driver combination — see network-scanning.md for the
+#        full findings before considering reintroducing it.
 # Tested: macOS Tahoe 26.x (Apple Silicon)
 # Note: Will work until Rosetta 2 translation layer is no longer shipped with macOS.
 # Note: This is an unsupported "side-load" of x86_64 Canon binaries (Rosetta).
@@ -18,11 +17,8 @@
 
 set -euo pipefail
 
-NETWORK=0
-if [[ "${1:-}" == "--headless-scan" ]]; then
-  NETWORK=1
-elif [[ $# -gt 0 ]]; then
-  echo "Error: unknown argument '$1' (usage: $0 [--headless-scan])" >&2
+if [[ $# -gt 0 ]]; then
+  echo "Error: unknown argument '$1' (usage: $0)" >&2
   exit 1
 fi
 
@@ -115,54 +111,12 @@ echo "--- Cleanup and discovery reload ---"
 hdiutil detach "$VOLUME"
 sudo killall ImageCaptureServices 2>/dev/null || true
 
-if [[ "$NETWORK" -eq 1 ]]; then
-  echo "--- Headless scan setup (--headless-scan) ---"
-  # CIJScannerRegister publishes the registered ICA device entry that network
-  # scans must be driven through (the Bonjour entry fails -9933). Without the
-  # agent it only starts when something else launches it, and a reboot leaves
-  # network scanning broken.
-  AGENT_DIR="$HOME/Library/LaunchAgents"
-  AGENT_PLIST="$AGENT_DIR/jp.co.canon.CIJScannerRegister.plist"
-  mkdir -p "$AGENT_DIR"
-  cat > "$AGENT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>jp.co.canon.CIJScannerRegister</string>
-  <key>ProgramArguments</key><array>
-    <string>$DEST_REGISTER/CIJScannerRegister.app/Contents/MacOS/CIJScannerRegister</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-</dict></plist>
-PLIST
-  launchctl bootout gui/"$(id -u)/jp.co.canon.CIJScannerRegister" 2>/dev/null || true
-  launchctl bootstrap gui/"$(id -u)" "$AGENT_PLIST"
-  # Headless scan script next to the verify script for terminal use.
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  if [[ -f "$SCRIPT_DIR/scan_network_test.swift" ]]; then
-    sudo mkdir -p /usr/local/bin
-    sudo install -m 755 "$SCRIPT_DIR/scan_network_test.swift" /usr/local/bin/canon-scan-test.swift
-  fi
-fi
-
 echo "--- Deployment complete ---"
 echo ""
 echo "Canon ICA module name is 'Canon IJScanner1.app' (the '1' is Canon's product name, not a duplicate install)."
 echo ""
-echo "Network scanning (Wi-Fi/Ethernet):"
-echo "  1. Run: ./verify_network_scan.sh"
-echo "  2. GUI note: the 'Shared' (Bonjour) entry fails -9933 on this printer —"
-echo "     headless scanning via the registered entry is the proven path."
-echo "  3. For headless scanning, deploy with --headless-scan and run:"
-echo "     swift /usr/local/bin/canon-scan-test.swift"
-echo "     (requires Image Capture GUI closed; scans the registered ICA entry)"
-echo ""
 echo "USB scanning:"
 echo "  1. Plug in USB, wait a few seconds."
-echo "  2. Open Image Capture → device under 'Devices'."
-echo ""
-echo "If a network scan fails with -9933 ('cannot communicate'): quit Image"
-echo "Capture (the Canon module services one client), and scan the registered"
-echo "ICA entry — see README 'Network scanning' for the working procedure."
+echo "  2. Open Image Capture -> device under 'Devices'."
 echo ""
 echo "Debug: /usr/bin/log stream --predicate 'process == \"Canon IJScanner1\" OR process == \"Image Capture\"'"

@@ -5,58 +5,35 @@ driver (the High Sierra build in this folder). Printing was never a problem:
 the Bonjour/IPP queue prints reliably. Scanning over the network was the hard
 part. These are the results of several debugging sessions in October 2026,
 including packet captures and disassembly of Canon's scanner module.
+Bottom line: scanning is USB-only; wireless scanning is impossible with
+this driver, and the sections below document why in detail.
 
-## The procedure that works
+## What works
 
-```bash
-./deploy_canon_scanner.sh --headless-scan
-# Close the Image Capture GUI, then:
-swift scan_network_test.swift
-```
+USB scanning. Plug the cable in, open Image Capture, pick the Canon under
+**Devices**. The deploy script in this folder installs the driver for that.
 
-`scan_network_test.swift` browses with `ICDeviceBrowser` (mask `0xF02`), picks
-the **registered** device entry (uuid starting `00000000-0000-0000-0000-3631`),
-opens the session, waits 2 s after unit selection, scans the full platen at
-150 dpi, and closes the session gracefully on the way out. A scan takes about
-15 seconds. Success looks like this in the output:
-
-```
-STATUS: Scanner is warming up. -> ICScannerStatusWarmUpDone
-SCAN COMPLETE error: nil
-```
-
-No warm-up pair means the job never started.
+Headless scanning over Wi-Fi does not work and cannot be made to work. What
+looked like wireless scanning in earlier testing (scripted scans via a
+"registered" ICA entry while the cable was unplugged) turned out to be a
+ghost: `CIJScannerRegister` publishes a fake USB device entry from the
+printer's recent USB attach state, and packet captures showed no scan data
+ever crossed the network during those scans. Once the USB attach state aged
+out, the entry stopped existing and could not be recreated without the cable.
 
 ## Two entries appear; only one scans
 
-The same physical scanner shows up twice in Image Capture:
+During testing, the same physical scanner showed up twice in Image Capture:
 
 - **Registered entry** (`00000000-0000-0000-0000-363135463144`), published by
-  `CIJScannerRegister.app`, which the deploy script installs as a LaunchAgent.
-  This is the entry that scans, every time.
+  `CIJScannerRegister.app`. The only entry that ever produced a scan, but a
+  ghost: it masqueraded the printer's recent USB attachment, moved zero
+  network packets during scans, and stopped existing once the USB attach
+  state aged out (verified 2026-10-15: neither a `CIJScannerRegister`
+  restart nor an icdd restart recreates it without the cable).
 - **Bonjour entry** (`615F1D00-...`), built from the printer's
   `_scanner._tcp` advertisement on UDP 8612. This entry fails with
   ICA error -9933 ("cannot communicate") essentially every time.
-
-`CIJScannerRegister` only needs to run long enough to seed the entry; the
-registration persists in Image Capture's cache after the daemon quits. After
-a reboot, launch it once and wait about 15 seconds. If you plug the printer
-in over USB as well, the registered entry is served by a real USB transport,
-which is the most reliable configuration of all.
-
-## Rules that keep it working
-
-- **Close the Image Capture GUI before scripted scans.** The Canon module
-  services one client. With the GUI open, a CLI session hangs silently at
-  `requestOpenSession`.
-- **Do not retry in a loop.** The printer serves one scan session. Killing
-  the module mid-session or hammering retries leaves the printer busy for
-  minutes, and each failed retry extends the window. If things wedge, quit
-  Image Capture, let the module exit on its own, wait five minutes with no
-  scan attempts, then try once.
-- **Close the session gracefully** when scripting. The bundled script calls
-  `requestCloseSession`; scripts that skip it leave the printer's session
-  allocated.
 
 ## Why the Bonjour entry fails (the interesting part)
 

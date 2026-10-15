@@ -14,7 +14,7 @@ This has **only been tested on the maintainer’s setup** (including **macOS Tah
 
 | Path | Role |
 |------|------|
-| [`scanner-driver/`](scanner-driver/) | IJ Scanner install (`deploy_canon_scanner.sh`), [`verify_network_scan.sh`](scanner-driver/verify_network_scan.sh), headless [`scan_network_test.swift`](scanner-driver/scan_network_test.swift), Canon scanner DMG |
+| [`scanner-driver/`](scanner-driver/) | IJ Scanner install (`deploy_canon_scanner.sh`), network-scanning findings ([`network-scanning.md`](scanner-driver/network-scanning.md)), Canon scanner DMG |
 | [`printer-driver/`](printer-driver/) | CUPS / IJ printer install scripts and Canon printer DMG |
 
 Canon’s **official disk images** are **included in this repository** under those folders (see [`CANON_DMG_NOTICE.md`](CANON_DMG_NOTICE.md) - they are **Canon’s software**, not covered by this repo’s MIT license). If your copy omits them, download the same files from Canon using the link above.
@@ -32,77 +32,27 @@ After clone, the scanner DMG should be at `scanner-driver/misd-mac-ijscanner1-4_
 
 ```bash
 cd /path/to/canon-mg6250-mac-driver-bundle/scanner-driver
-chmod +x deploy_canon_scanner.sh verify_network_scan.sh
-./deploy_canon_scanner.sh              # USB-only scanning
-# or:
-./deploy_canon_scanner.sh --headless-scan
-                                       # also installs the headless scan script
-                                       # to /usr/local/bin and a per-user
-                                       # LaunchAgent that runs CIJScannerRegister
-                                       # at login, keeping the registered ICA
-                                       # scan entry alive across reboots
-./verify_network_scan.sh
+chmod +x deploy_canon_scanner.sh
+./deploy_canon_scanner.sh              # USB scanning
 ```
 
-Then open **Image Capture**:
+Then plug in USB, wait a few seconds, and open **Image Capture**: pick the Canon under **Devices**.
 
-- **USB scan:** pick the Canon under **Devices** (plug in USB first).
-- **Network scan:** headless via `scan_network_test.swift` is the proven path (drives the **registered** ICA entry — see [Network scanning](#network-scanning-mdns-and-image-capture)). The GUI "Shared"/Bonjour entry fails −9933 on this printer.
+Network scanning over Wi-Fi does **not** work on this printer with Canon's driver - see [Network scanning](#network-scanning-mdns-and-image-capture) for the measured reasons.
 
-**Name `Canon IJScanner1.app`:** the trailing **`1`** is Canon’s ICA product name (`ijscanner1` in the DMG filename). It is not a second copy you installed by mistake, and you should not rename it.
+**Name `Canon IJScanner1.app`:** the trailing **`1`** is Canon's ICA product name (`ijscanner1` in the DMG filename). It is not a second copy you installed by mistake, and you should not rename it.
 
-To debug: `/usr/bin/log stream --predicate 'process == "Canon IJScanner1" OR process == "Image Capture"'` (use `/usr/bin/log` over SSH — plain `log` is a zsh builtin).
+To debug: `/usr/bin/log stream --predicate 'process == "Canon IJScanner1" OR process == "Image Capture"'` (use `/usr/bin/log` over SSH - plain `log` is a zsh builtin).
 
 ## Network scanning (mDNS and Image Capture)
 
-The full write-up of what makes network scanning work (and why the Bonjour entry fails -9933) is in [`scanner-driver/network-scanning.md`](scanner-driver/network-scanning.md).
+Network scanning is **not possible** on the MG6250 with Canon's Mac driver. The full investigation (packet captures, driver disassembly, patch experiments) is in [`scanner-driver/network-scanning.md`](scanner-driver/network-scanning.md). Short version:
 
-The MG6250 does **not** advertise Apple’s driverless scan services (`_uscan._tcp` / `_airscan._tcp`). Network scan uses Canon’s **BJNP** stack over **mDNS** (multicast DNS, the same discovery family Bonjour uses for printing).
+- The printer advertises Canon's **BJNP** scan service (`_scanner._tcp`, UDP port 8612) - not Apple's driverless `_uscan._tcp` / `_airscan._tcp`.
+- The Bonjour entry in Image Capture always fails with -9933: Canon's `cijsdj_bjnp.plugin` speaks the little-endian BJNPe dialect while the MG6250 firmware answers big-endian BJNP2, so the module can never parse the printer's replies.
+- A second ICA entry ("registered", published by `CIJScannerRegister`) appeared to scan without USB, but packet captures showed it never touched the network - it was a ghost of the printer's recent USB attachment serving cached data, and it stops existing once that USB attach state ages out.
 
-| What you might know | What the MG6250 uses |
-|---------------------|----------------------|
-| AirPrint printer discovery | `_ipp._tcp` on port 631 |
-| “AirScan” / driverless scan | `_uscan._tcp` — **not** on this printer |
-| Canon network scan | **`_scanner._tcp`** on **UDP port 8612** (BJNP) |
-
-**mDNS in one minute:** your Mac sends a multicast question on the LAN (“who provides `_scanner._tcp`?”). The printer answers with a hostname such as `Canon-MG6250.local` and port **8612**. No static IP is required, but the Mac and printer must be on the **same subnet** with **multicast allowed** (typical home Wi‑Fi is fine; some guest VLANs block it).
-
-**Check discovery (no sudo):**
-
-```bash
-cd scanner-driver
-./verify_network_scan.sh
-# or manually (Ctrl+C after ~15s):
-dns-sd -B _scanner._tcp local.
-```
-
-You should see an instance such as `Canon-MG6250`. Resolve details:
-
-```bash
-dns-sd -L "Canon-MG6250" _scanner._tcp local.
-```
-
-**Image Capture UI:** network scanners usually appear under **Shared** (remote/Bonjour device), not under **Devices** (direct/USB). That label is normal; it does not mean another Mac is sharing the scanner.
-
-**Recommended install order:** deploy the **printer** queue first (network printing), then **`deploy_canon_scanner.sh --headless-scan`** for scan. One physical printer shows up **twice** in Image Capture (registered BJNP entry + Bonjour browse). The MG6250 allows **one** active BJNP scan session — if scan fails with Canon’s generic “cannot communicate” dialog (−9933):
-
-1. Quit **Image Capture** (the Canon module services one client — an open GUI blocks scripted scans).
-2. Scan the **registered** entry (`00000000-0000-0000-0000-3631…`) — the Bonjour entry (`615F1D00-…`) fails −9933 with or without `CIJScannerRegister` running (measured 2026-10-12 04:13 BST).
-3. If the registered entry doesn’t appear in `ICDeviceBrowser` (typically only after a reboot), seed it: `open -a "/Library/Image Capture/Support/LegacyDeviceDiscoveryHelpers/CIJScannerRegister.app"`, wait ~15 s, then scan. The registration persists in the ICA cache after the daemon quits — it does not need to keep running.
-4. If it *still* fails: let the module exit on its own, **wait ~5 minutes without any attempt**, then run once. Do not loop retries.
-
-**Scripted scan:** [`scan_network_test.swift`](scanner-driver/scan_network_test.swift) browses with `ICDeviceBrowser` (mask `0xF02`), opens the session on the **registered entry** (`00000000-0000-0000-0000-3631…` uuid, served by `CIJScannerRegister`), waits 2 s after unit selection before `requestScan`, and **closes the ICA session gracefully** on completion so the next scan does not need `pkill` or a cool-down:
-
-```bash
-swift scan_network_test.swift                                   # registered entry, output /tmp/canon-scan-out/
-swift scan_network_test.swift 00000000-0000-0000-0000-3631 2 myscan   # uuid prefix, pre-scan delay, output basename
-```
-
-**Which entry matters (measured 2026-10-12 ~03:52–04:30 BST):** the two ICA entries (`Bonjour 615F1D00-…` and registered `…363135463144`) use **different transport plugins with different lifetimes** — on the Bonjour entry, `cijsdj_bjnp.plugin` is destroyed the instant its slow (17–22 s) session setup completes, so `requestScan` fires with no transport and ICA surfaces the module's error as `-9933`; the registered entry presents as a local device, loads `cijsdj_iom.plugin`, and keeps its transport for the whole session. Scans via the **registered** entry succeeded 6× in a row (~10–15 s each, USB unplugged) — **including with `CIJScannerRegister` quit** (its registration persists in the ICA cache; the daemon is only needed to seed it, e.g. after a reboot). The **Bonjour** entry is non-deterministic: it worked twice at ~03:06 with instant (20 ms) session setup, and failed every time when setup took 17–22 s. The success signature is the warm-up pair in the log: `Scanner is warming up` → `ICScannerStatusWarmUpDone` → `SCAN COMPLETE error: nil`. Also required: **Image Capture GUI closed** (the Canon module services one client — an open GUI makes the CLI session hang at `requestOpenSession` with no callback).
-
-If it still reports −9933 (“cannot communicate”), check in order: (1) Image Capture GUI closed, (2) the registered entry exists — if not (e.g. fresh reboot), seed it with `open -a "/Library/Image Capture/Support/LegacyDeviceDiscoveryHelpers/CIJScannerRegister.app"`, wait ~15 s, (3) the printer is serving a stale session — quit Image Capture, let the module exit on its own, **wait ~5 minutes without any attempt** (including GUI), then run it once. Do not loop retries.
-
-**Firewall:** macOS application firewall rarely blocks outbound mDNS; if you use third-party security software, allow local network / multicast.
+Scanning works over USB only.
 
 ## Quick start - printer
 
@@ -156,8 +106,6 @@ Dry-run extract only (no copy to `/Library`): `DRY_RUN=1 ./deploy_printer_canon_
 | [`add_canon_mg6250_official_queue.sh`](printer-driver/add_canon_mg6250_official_queue.sh) | Add a queue with the Canon PPD |
 | [`deploy_printer_driver.sh`](printer-driver/deploy_printer_driver.sh) | Legacy: filters (+ optional scanner from printer folder); often insufficient alone on modern macOS |
 | [`restore_canon_mg6250_test_airprint.sh`](printer-driver/restore_canon_mg6250_test_airprint.sh) | Restore `.ppd.bak` for a patched test queue |
-
-Scanner helper: [`verify_network_scan.sh`](scanner-driver/verify_network_scan.sh) — bounded mDNS + BJNP probe before using Image Capture over Wi‑Fi.
 
 ## Grayscale and black-and-white printing
 
