@@ -9,7 +9,7 @@ including packet captures and disassembly of Canon's scanner module.
 ## The procedure that works
 
 ```bash
-./deploy_canon_scanner.sh --network
+./deploy_canon_scanner.sh --headless-scan
 # Close the Image Capture GUI, then:
 swift scan_network_test.swift
 ```

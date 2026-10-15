@@ -35,9 +35,12 @@ cd /path/to/canon-mg6250-mac-driver-bundle/scanner-driver
 chmod +x deploy_canon_scanner.sh verify_network_scan.sh
 ./deploy_canon_scanner.sh              # USB-only scanning
 # or:
-./deploy_canon_scanner.sh --network    # also starts CIJScannerRegister via a
-                                       # per-user LaunchAgent and installs the
-                                       # headless scan script to /usr/local/bin
+./deploy_canon_scanner.sh --headless-scan
+                                       # also installs the headless scan script
+                                       # to /usr/local/bin and a per-user
+                                       # LaunchAgent that runs CIJScannerRegister
+                                       # at login, keeping the registered ICA
+                                       # scan entry alive across reboots
 ./verify_network_scan.sh
 ```
 
@@ -81,7 +84,7 @@ dns-sd -L "Canon-MG6250" _scanner._tcp local.
 
 **Image Capture UI:** network scanners usually appear under **Shared** (remote/Bonjour device), not under **Devices** (direct/USB). That label is normal; it does not mean another Mac is sharing the scanner.
 
-**Recommended install order:** deploy the **printer** queue first (network printing), then **`deploy_canon_scanner.sh --network`** for scan. One physical printer shows up **twice** in Image Capture (registered BJNP entry + Bonjour browse). The MG6250 allows **one** active BJNP scan session — if scan fails with Canon’s generic “cannot communicate” dialog (−9933):
+**Recommended install order:** deploy the **printer** queue first (network printing), then **`deploy_canon_scanner.sh --headless-scan`** for scan. One physical printer shows up **twice** in Image Capture (registered BJNP entry + Bonjour browse). The MG6250 allows **one** active BJNP scan session — if scan fails with Canon’s generic “cannot communicate” dialog (−9933):
 
 1. Quit **Image Capture** (the Canon module services one client — an open GUI blocks scripted scans).
 2. Scan the **registered** entry (`00000000-0000-0000-0000-3631…`) — the Bonjour entry (`615F1D00-…`) fails −9933 with or without `CIJScannerRegister` running (measured 2026-10-12 04:13 BST).
